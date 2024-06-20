@@ -37,11 +37,10 @@ psram:
   speed: 80MHz
 
 api:
+  id: my_api
   on_client_connected:
-    - lambda: 'id(api_connection) = true;'
     - component.update: s3_box_lcd
   on_client_disconnected:
-    - lambda: 'id(api_connection) = false;'
     - component.update: s3_box_lcd
 
 ota:
@@ -51,14 +50,13 @@ logger:
   level: DEBUG
 
 wifi:
+  id: my_wifi
   ap:
     ssid: ${name}
     password: s3box123
   on_connect:
-    - lambda: 'id(wifi_connection) = true;'
     - component.update: s3_box_lcd
   on_disconnect:
-    - lambda: 'id(wifi_connection) = false;'
     - component.update: s3_box_lcd
 
 time:
@@ -66,42 +64,6 @@ time:
     id: ha_time
     
 interval:
-  - interval: 10s
-    then:
-      - if:
-          condition:
-            - lambda: 'return { (id(api_connection) != true) };'
-          then:
-            - if:
-                condition:
-                  api.connected:
-                then:
-                  - lambda: "id(api_connection) = true;"
-          else:
-            - if:
-                condition:
-                  not:
-                    api.connected:
-                then:
-                  - lambda: "id(api_connection) = false;"
-  - interval: 10s
-    then:
-      - if:
-          condition:
-            - lambda: 'return { (id(wifi_connection) != true) };'
-          then:
-            - if:
-                condition:
-                  wifi.connected:
-                then:
-                  - lambda: "id(wifi_connection) = true;"
-          else:
-            - if:
-                condition:
-                  not:
-                    wifi.connected:
-                then:
-                  - lambda: "id(wifi_connection) = false;"
   - interval: 20s
     then:
       - component.update: s3_box_lcd
@@ -160,14 +122,6 @@ globals:
     type: int
     restore_value: no
     initial_value: '0'    # 0 = Status, 1 = Learning IR
-  - id: wifi_connection
-    type: bool
-    restore_value: no
-    initial_value: "false"
-  - id: api_connection
-    type: bool
-    restore_value: no
-    initial_value: "false"
   - id: learning_start_timestamp
     type: int
     restore_value: no
@@ -259,10 +213,10 @@ display:
         case 0: { // status
           it.fill(id(black));
           it.print(x, y += 20, id(my_font), yellow, "- Status -");
-          if (id(wifi_connection) == true)  { it.print(x, y += 20, id(my_font), white, "wifi connected"); }
-          else                              { it.print(x, y += 20, id(my_font), red, "wifi disconnected"); }
-          if (id(api_connection) == true)   { it.print(x, y += 20, id(my_font), white, "api connected"); }
-          else                              { it.print(x, y += 20, id(my_font), red, "api disconnected"); }
+          if (id(my_wifi).is_connected()) { it.print(x, y += 20, id(my_font), white, "wifi connected"); }
+          else                            { it.print(x, y += 20, id(my_font), red, "wifi disconnected"); }
+          if (id(my_api).is_connected())  { it.print(x, y += 20, id(my_font), white, "api connected"); }
+          else                            { it.print(x, y += 20, id(my_font), red, "api disconnected"); }
           if (id(enable_ir_rx).state == true) { it.print(x, y += 20, id(my_font), green, "ir rx enabled"); }
           else                                { it.print(x, y += 20, id(my_font), white, "ir rx disabled"); }
           if (id(ir_signal_data).length() > 0)  { it.print(x, y += 20, id(my_font), green, "ir signal recorded"); }
