@@ -1,0 +1,360 @@
+# https://github.com/AlmostInteractive/ESP32-S3-Box3-IR-Blaster-Learning-Example
+# Thanks to https://github.com/BigBobbas/ESP32-S3-Box3-Custom-ESPHome for getting me going  :)
+
+substitutions:
+  name: esp32-s3box-3-ir-blaster
+  friendly_name: ESP32 S3 Box 3 - IR Example
+  ir_learn_seconds: '6'
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  platformio_options:
+    board_build.flash_mode: dio
+  on_boot:
+    priority: 600
+    then:
+      - light.turn_on: 
+          id: led
+          brightness: 100%
+      - component.update: s3_box_lcd
+  project:
+    name: "irtest.s3box"
+    version: "1.0.0"
+
+esp32:
+  board: esp32s3box
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+ 
+psram:
+  mode: octal
+  speed: 80MHz
+
+api:
+  on_client_connected:
+    - lambda: 'id(api_connection) = true;'
+    - component.update: s3_box_lcd
+  on_client_disconnected:
+    - lambda: 'id(api_connection) = false;'
+    - component.update: s3_box_lcd
+
+ota:
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+  level: DEBUG
+
+wifi:
+  ap:
+    ssid: ${name}
+    password: s3box123
+  on_connect:
+    - lambda: 'id(wifi_connection) = true;'
+    - component.update: s3_box_lcd
+  on_disconnect:
+    - lambda: 'id(wifi_connection) = false;'
+    - component.update: s3_box_lcd
+
+time:
+  - platform: homeassistant
+    id: ha_time
+    
+interval:
+  - interval: 10s
+    then:
+      - if:
+          condition:
+            - lambda: 'return { (id(api_connection) != true) };'
+          then:
+            - if:
+                condition:
+                  api.connected:
+                then:
+                  - lambda: "id(api_connection) = true;"
+          else:
+            - if:
+                condition:
+                  not:
+                    api.connected:
+                then:
+                  - lambda: "id(api_connection) = false;"
+  - interval: 10s
+    then:
+      - if:
+          condition:
+            - lambda: 'return { (id(wifi_connection) != true) };'
+          then:
+            - if:
+                condition:
+                  wifi.connected:
+                then:
+                  - lambda: "id(wifi_connection) = true;"
+          else:
+            - if:
+                condition:
+                  not:
+                    wifi.connected:
+                then:
+                  - lambda: "id(wifi_connection) = false;"
+  - interval: 20s
+    then:
+      - component.update: s3_box_lcd
+  - interval: 1s
+    then:
+      - if: 
+          condition:
+            - lambda: 'return ((id(app_state)) == 1);'
+          then:
+            - if:
+                condition:
+                  - lambda: 'return ((id(ha_time).now().timestamp - id(learning_start_timestamp)) >= id(ir_learn_seconds));'
+                then:
+                  - switch.turn_off: enable_ir_rx
+                  - lambda: |-
+                      id(app_state) = 0;
+                      
+                      std::vector<std::string> rxs = id(ir_signals_vector);
+                      std::map<int, std::vector<std::string>> lengthToDataMap;
+                      int mostCommonLength = -1;
+                      
+                      for(int i = 0; i < rxs.size(); i++) {
+                          std::string data = rxs[i];
+                          int numSpaces = std::count(data.begin(), data.end(), ' ');
+                          if (data.size() > 5 && numSpaces % 2 == 0) {
+                            data.resize(data.size() - 5);
+                          }
+
+                          int dataLen = data.length();
+                          
+                          lengthToDataMap[dataLen].push_back(data);
+                          
+                          if ((mostCommonLength == -1) || ((mostCommonLength != dataLen) && (lengthToDataMap[mostCommonLength].size() < lengthToDataMap[dataLen].size()))) {
+                              mostCommonLength = dataLen;
+                          }
+                      }
+                      
+                      if(mostCommonLength > -1) {
+                        id(ir_signal_data) = lengthToDataMap[mostCommonLength][0];
+                      }
+                      rxs.clear();
+                      ESP_LOGD("ir_signal_data", id(ir_signal_data).c_str());
+
+globals:
+  # saved to flash
+  - id: ir_signal_data
+    type: std::string
+    restore_value: yes
+    initial_value: '""'
+  # saved in ram
+  - id: ir_learn_seconds
+    type: int
+    restore_value: no
+    initial_value: ${ir_learn_seconds}
+  - id: app_state
+    type: int
+    restore_value: no
+    initial_value: '0'    # 0 = Status, 1 = Learning IR
+  - id: wifi_connection
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  - id: api_connection
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  - id: learning_start_timestamp
+    type: int
+    restore_value: no
+    initial_value: '0'
+  - id: ir_signals_vector
+    type: std::vector<std::string>
+    restore_value: no
+
+button:
+  - platform: restart
+    id: reboot
+    name: "Reboot"
+  - platform: template
+    id: ir_pronto_blaster
+    name: "IR Pronto Blaster"
+    on_press:
+      if:
+        condition:
+          - lambda: 'return id(ir_signal_data).length() > 0;'
+        then:
+          - remote_transmitter.transmit_pronto:
+              data: !lambda "return id(ir_signal_data).c_str();"
+
+output:
+  - platform: ledc
+    pin: GPIO47
+    id: backlight_output
+
+light:
+  - platform: monochromatic
+    id: led
+    name: LCD Backlight
+    entity_category: config
+    output: backlight_output
+    restore_mode: RESTORE_DEFAULT_ON
+    default_transition_length: 500ms
+
+font:
+  - file: "gfonts://Roboto@500"
+    id: my_font
+    size: 14
+
+color:
+  - id: green
+    hex: '75D15F'
+  - id: red
+    hex: 'FF3131'
+  - id: blue
+    hex: '47B7E9'
+  - id: blue_drk
+    hex: '085296'
+  - id: amber
+    hex: 'FBAB35'
+  - id: lime
+    hex: '20FC30'
+  - id: pink
+    hex: 'D92BBC'
+  - id: yellow
+    hex: 'FFC000'
+  - id: black
+    hex: '000000'
+  - id: white
+    hex: 'ffffff'
+  - id: purple
+    hex: '73264D'
+  - id: light_blue
+    hex: 'CFE2F3'
+
+spi:
+  clk_pin: 7
+  mosi_pin: 6
+
+display:
+  - platform: ili9xxx
+    id: s3_box_lcd
+    model: S3BOX
+    data_rate: 40MHz
+    cs_pin: 5
+    dc_pin: 4
+    reset_pin:
+      number: 48
+      inverted: true
+    update_interval: never
+    lambda: |-
+      int x = 20;
+      int y = 0;
+
+      switch(id(app_state)) {
+        case 0: { // status
+          it.fill(id(black));
+          it.print(x, y += 20, id(my_font), yellow, "- Status -");
+          if (id(wifi_connection) == true)  { it.print(x, y += 20, id(my_font), white, "wifi connected"); }
+          else                              { it.print(x, y += 20, id(my_font), red, "wifi disconnected"); }
+          if (id(api_connection) == true)   { it.print(x, y += 20, id(my_font), white, "api connected"); }
+          else                              { it.print(x, y += 20, id(my_font), red, "api disconnected"); }
+          if (id(enable_ir_rx).state == true) { it.print(x, y += 20, id(my_font), green, "ir rx enabled"); }
+          else                                { it.print(x, y += 20, id(my_font), white, "ir rx disabled"); }
+          if (id(ir_signal_data).length() > 0)  { it.print(x, y += 20, id(my_font), green, "ir signal recorded"); }
+          else                                  { it.print(x, y += 20, id(my_font), red, "ir signal empty"); }
+          break;
+        }
+
+        case 1: { // ir learning
+          it.fill(id(black));
+          it.print(x, y += 20, id(my_font), yellow, "- IR Learning Mode -");
+          it.print(x, y += 20, id(my_font), white, "Push the button you want to learn");
+          it.print(x, y += 20, id(my_font), white, "  several times to record it.");
+          y += 20;
+          if (id(enable_ir_rx).state == true) { it.print(x, y += 20, id(my_font), green, "ir rx enabled"); }
+          else                                { it.print(x, y += 20, id(my_font), red, "ir rx disabled"); }
+          int remaining = id(ir_learn_seconds) - (id(ha_time).now().timestamp - id(learning_start_timestamp));
+          it.printf(x, y += 20, id(my_font), white, "%d sec(s) remaining", remaining);
+          it.printf(x, y += 20, id(my_font), white, "Recorded %d transmission(s)", id(ir_signals_vector).size());
+          break;
+        }
+      }
+
+i2c:
+  - id: bus_a
+    sda: GPIO08
+    scl: GPIO18
+    scan: false
+    sda_pullup_enabled: true
+    scl_pullup_enabled: true
+    frequency: 100kHz
+   
+binary_sensor:
+  # top left hand physical button
+  - platform: gpio
+    pin:
+      number: GPIO0
+      mode: INPUT_PULLUP
+      inverted: true
+    name: Top Left Button
+    entity_category: diagnostic
+    on_press:
+      - if:
+          condition:
+            - lambda: 'return { id(ha_time).now().is_valid() };'
+          then:                
+            - lambda: |-
+                id(learning_start_timestamp) = id(ha_time).now().timestamp;
+                id(app_state) = 1;
+                id(ir_signal_data) = "";
+                id(ir_signals_vector).clear();
+            - switch.turn_on: enable_ir_rx
+            - component.update: s3_box_lcd
+  
+  # physical mute button
+  - platform: gpio
+    name: Mute Button
+    pin: 
+      number: GPIO1
+      inverted: true
+    on_state:
+      - if:
+          condition:
+            - lambda: 'return id(ir_signal_data).length() > 0;'
+          then:
+            - button.press: ir_pronto_blaster
+
+switch:
+  - platform: gpio
+    id: enable_ir_rx
+    name: IR Receiver
+    pin:
+      number: GPIO44
+      inverted: true
+
+remote_receiver:
+  id: ir_rx
+  pin: 
+    number: 38
+    inverted: true
+  dump: all
+  rmt_channel: 4
+  memory_blocks: 4
+
+  on_pronto:
+    then:
+      - lambda: 'id(ir_signals_vector).push_back(x.data);'
+      - component.update: s3_box_lcd
+  
+remote_transmitter:
+  id: ir_tx
+  pin: 
+    number: 39
+    inverted: false
+  carrier_duty_percent: 50%
+  rmt_channel: 0
