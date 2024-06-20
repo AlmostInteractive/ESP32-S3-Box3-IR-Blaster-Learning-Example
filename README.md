@@ -9,3 +9,7 @@ On the Status screen:
  - push the physical mute button to send an IR broadcast (if one has been learned)
 
 On the IR Learning screen, click any IR button toward the IR receiver several times over the alotted time to learn the signal.
+
+## Notes
+
+In my experience, the IR diode in the S3 Box3 sensor dock was not very powerful, failing to transmit to my TV which was 2.3m away from the sensor dock.  At 1.4m it worked reliably.  To test your ir transmissions, you can enable the IR receiver while on the Status screen and then transmit with the Mute button.  You'll see any received data in the logs.
