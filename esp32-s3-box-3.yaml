@@ -44,6 +44,7 @@ api:
     - component.update: s3_box_lcd
 
 ota:
+  - platform: esphome
 
 logger:
   hardware_uart: USB_SERIAL_JTAG
@@ -77,15 +78,15 @@ interval:
                 condition:
                   - lambda: 'return ((id(ha_time).now().timestamp - id(learning_start_timestamp)) >= id(ir_learn_seconds));'
                 then:
-                  - switch.turn_off: enable_ir_rx
                   - lambda: |-
                       id(app_state) = 0;
                       
+                      // find longest signal
                       std::vector<std::string> rxs = id(ir_signals_vector);
-                      std::map<int, std::vector<std::string>> lengthToDataMap;
-                      int mostCommonLength = -1;
+                      int longestSignalLength = 0;
+                      std::string longestSignal;
                       
-                      for(int i = 0; i < rxs.size(); i++) {
+                      for (int i = 0; i < rxs.size(); i++) {
                           std::string data = rxs[i];
                           int numSpaces = std::count(data.begin(), data.end(), ' ');
                           if (data.size() > 5 && numSpaces % 2 == 0) {
@@ -94,15 +95,14 @@ interval:
 
                           int dataLen = data.length();
                           
-                          lengthToDataMap[dataLen].push_back(data);
-                          
-                          if ((mostCommonLength == -1) || ((mostCommonLength != dataLen) && (lengthToDataMap[mostCommonLength].size() < lengthToDataMap[dataLen].size()))) {
-                              mostCommonLength = dataLen;
+                          if (dataLen > longestSignalLength) {
+                            longestSignal = data;
+                            longestSignalLength = dataLen;
                           }
                       }
                       
-                      if(mostCommonLength > -1) {
-                        id(ir_signal_data) = lengthToDataMap[mostCommonLength][0];
+                      if (longestSignalLength > 0) {
+                        id(ir_signal_data) = longestSignal;
                       }
                       rxs.clear();
                       ESP_LOGD("ir_signal_data", id(ir_signal_data).c_str());
@@ -217,8 +217,8 @@ display:
           else                            { it.print(x, y += 20, id(my_font), red, "wifi disconnected"); }
           if (id(my_api).is_connected())  { it.print(x, y += 20, id(my_font), white, "api connected"); }
           else                            { it.print(x, y += 20, id(my_font), red, "api disconnected"); }
-          if (id(enable_ir_rx).state == true) { it.print(x, y += 20, id(my_font), green, "ir rx enabled"); }
-          else                                { it.print(x, y += 20, id(my_font), white, "ir rx disabled"); }
+          if (id(enable_ir).state == true)    { it.print(x, y += 20, id(my_font), green, "ir enabled"); }
+          else                                { it.print(x, y += 20, id(my_font), white, "ir disabled"); }
           if (id(ir_signal_data).length() > 0)  { it.print(x, y += 20, id(my_font), green, "ir signal recorded"); }
           else                                  { it.print(x, y += 20, id(my_font), red, "ir signal empty"); }
           break;
@@ -230,8 +230,8 @@ display:
           it.print(x, y += 20, id(my_font), white, "Push the button you want to learn");
           it.print(x, y += 20, id(my_font), white, "  several times to record it.");
           y += 20;
-          if (id(enable_ir_rx).state == true) { it.print(x, y += 20, id(my_font), green, "ir rx enabled"); }
-          else                                { it.print(x, y += 20, id(my_font), red, "ir rx disabled"); }
+          if (id(enable_ir).state == true)    { it.print(x, y += 20, id(my_font), green, "ir enabled"); }
+          else                                { it.print(x, y += 20, id(my_font), red, "ir disabled"); }
           int remaining = id(ir_learn_seconds) - (id(ha_time).now().timestamp - id(learning_start_timestamp));
           it.printf(x, y += 20, id(my_font), white, "%d sec(s) remaining", remaining);
           it.printf(x, y += 20, id(my_font), white, "Recorded %d transmission(s)", id(ir_signals_vector).size());
@@ -267,7 +267,7 @@ binary_sensor:
                 id(app_state) = 1;
                 id(ir_signal_data) = "";
                 id(ir_signals_vector).clear();
-            - switch.turn_on: enable_ir_rx
+            - switch.turn_on: enable_ir
             - component.update: s3_box_lcd
   
   # physical mute button
@@ -285,11 +285,12 @@ binary_sensor:
 
 switch:
   - platform: gpio
-    id: enable_ir_rx
-    name: IR Receiver
+    id: enable_ir
+    name: "IR Power"
     pin:
       number: GPIO44
       inverted: true
+    restore_mode: ALWAYS_ON
 
 remote_receiver:
   id: ir_rx
